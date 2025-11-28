@@ -4,3 +4,4 @@ gTTS
 python-dotenv
 openai
 Werkzeug
+gunicorn

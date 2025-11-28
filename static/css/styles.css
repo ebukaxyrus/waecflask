@@ -1,0 +1,16 @@
+body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background: linear-gradient(135deg,#3b82f6,#1e40af); color: #111; }
+.card { border-radius: 12px; }
+u {
+  text-decoration: underline;
+  font-weight: 600;
+}
+.dor{
+  color: white;
+}
+.doe{
+  margin-left: 85px;
+
+}
+.door{
+  margin-bottom: -68px;
+}

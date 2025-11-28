@@ -1,0 +1,22 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="card p-4">
+  <h2>🎯 Quiz Results</h2>
+  <p>Score: {{ score }}</p>
+  <table class="table">
+    <thead>
+      <tr><th>#</th><th>Your Answer</th><th>Correct</th><th>Result</th></tr>
+    </thead>
+    <tbody>
+      {% for r in results %}
+        <tr>
+          <td>{{ r.Question_Number }}</td>
+          <td>{{ r.Your_Answer }}</td>
+          <td>{{ r.Correct_Answer }}</td>
+          <td>{{ r.Result }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

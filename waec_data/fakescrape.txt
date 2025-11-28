@@ -1,0 +1,655 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import time
+import re
+from urllib.parse import urljoin
+import logging
+import os
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://myschool.ng"
+
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+def clean_text(text):
+    """Cleans whitespace and removes redundant spaces from text."""
+    if not text:
+        return ""
+    return re.sub(r'\s+', ' ', text.strip())
+
+def extract_formatted_text(element):
+    """
+    Extracts text from a BeautifulSoup element, preserving basic formatting
+    like underline, bold, and italic using Markdown-like syntax.
+    Handles nested elements recursively.
+    """
+    if not element:
+        return ""
+        
+    formatted_text = ""
+    for content in element.contents:
+        if hasattr(content, 'name'): # It's a tag
+            if content.name in ['ins', 'u']:
+                text = content.get_text(strip=True)
+                if text:
+                    formatted_text += f"_{text}_ " # Underline
+            elif content.name in ['strong', 'b']:
+                text = content.get_text(strip=True)
+                if text:
+                    formatted_text += f"**{text}** " # Bold
+            elif content.name in ['em', 'i']:
+                text = content.get_text(strip=True)
+                if text:
+                    formatted_text += f"*{text}* " # Italic
+            elif content.name == 'br':
+                formatted_text += " " # Treat <br> as a space
+            elif content.name in ['p', 'div', 'span', 'li']: # Recurse into common block/inline elements
+                nested_text = extract_formatted_text(content)
+                if nested_text:
+                    formatted_text += nested_text + " "
+            else: # For other tags, just get their text
+                text = content.get_text(strip=True)
+                if text:
+                    formatted_text += text + " "
+        else: # It's a NavigableString (plain text)
+            text = str(content).strip()
+            if text:
+                formatted_text += text + " "
+    return clean_text(formatted_text)
+
+def extract_images_from_element(element):
+    """
+    Extracts all image URLs from an element.
+    Returns a list of complete image URLs.
+    """
+    if not element:
+        return []
+    
+    images = []
+    img_tags = element.find_all('img')
+    
+    for img in img_tags:
+        # Try different attributes where image URL might be stored
+        img_url = img.get('src') or img.get('data-src') or img.get('data-original')
+        
+        if img_url:
+            # Convert relative URLs to absolute URLs
+            full_url = urljoin(BASE_URL, img_url)
+            images.append(full_url)
+            
+            # Also capture alt text if available
+            alt_text = img.get('alt', '')
+            if alt_text:
+                logger.debug(f"Image found with alt text: {alt_text}")
+    
+    return images
+
+def extract_question_text_only(question_container):
+    """
+    Extracts only the question text from its specific container.
+    """
+    return extract_formatted_text(question_container)
+
+def extract_options(div):
+    """
+    Enhanced option extraction logic to find options in various HTML structures.
+    Prioritizes standard 'list-unstyled' structure, then general lists, then regex.
+    """
+    options = {"A": "", "B": "", "C": "", "D": ""}
+    
+    # Method 1: Standard ul with list-unstyled
+    ul = div.find("ul", class_="list-unstyled")
+    if ul:
+        for li in ul.find_all("li"):
+            strong = li.find("strong")
+            if strong:
+                letter = strong.get_text(strip=True).replace(".", "")
+                text = ""
+                # Get all text after the strong tag for the option content
+                for sib in strong.next_siblings:
+                    if hasattr(sib, 'get_text'):
+                        text += sib.get_text(separator=" ", strip=True)
+                    elif isinstance(sib, str):
+                        text += sib.strip()
+                if letter in options:
+                    options[letter] = clean_text(text)
+    
+    # Method 2: Look for any ul/ol with options (if Method 1 failed)
+    if not any(options.values()):
+        all_lists = div.find_all(['ul', 'ol'])
+        for ul_elem in all_lists:
+            items = ul_elem.find_all('li')
+            if len(items) >= 4: # Assume it's an options list if it has at least 4 items
+                for li in items:
+                    text = extract_formatted_text(li)
+                    for letter in ["A", "B", "C", "D"]:
+                        if text.lower().startswith(f"{letter.lower()}."):
+                            options[letter] = text[2:].strip() # Remove "A. ", "B. " etc.
+                            break
+                if any(options.values()):
+                    break
+    
+    # Method 3: Direct text search for A. B. C. D. patterns (if Method 2 failed)
+    if not any(options.values()):
+        all_text = div.get_text()
+        lines = all_text.split('\n')
+        for line in lines:
+            line = line.strip()
+            for letter in ["A", "B", "C", "D"]:
+                if line.startswith(f"{letter}."):
+                    option_text = line[2:].strip()
+                    if option_text:
+                        options[letter] = option_text
+                    break
+            
+    return options
+
+def extract_answer(detail_url, session):
+    """
+    Extracts the correct answer from the question's detail page.
+    Uses various regex patterns and searches in common elements.
+    """
+    if not detail_url:
+        return ""
+        
+    try:
+        res = session.get(detail_url, headers=headers, timeout=15)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+        
+        # Enhanced patterns for answer detection
+        patterns = [
+            r"(?:Answer|Correct Answer|The answer):\s*(?:Option\s*)?([A-D])",
+            r"(?:Option\s*)?([A-D])\s*is\s*(?:the\s*)?correct",
+            r"The\s*correct\s*(?:answer|option)\s*is\s*(?:Option\s*)?([A-D])",
+            r"Answer\s*[=:]\s*([A-D])",
+            r"^([A-D])$",
+            r"([A-D])\s*is\s*the\s*right\s*answer",
+            r"correct\s*option\s*is\s*([A-D])",
+            r"answer\s*is\s*option\s*([A-D])"
+        ]
+        
+        # Search in various elements where answers might be found
+        search_areas = soup.find_all([
+            "p", "span", "div", "strong", "b", "h4", "h5", 
+            "li", "td", "th", "em", "code"
+        ])
+        
+        for el in search_areas:
+            text = clean_text(el.get_text())
+            for pat in patterns:
+                match = re.search(pat, text, re.IGNORECASE)
+                if match:
+                    answer = match.group(1).upper()
+                    logger.debug(f"Answer found: {answer} from pattern: {pat}")
+                    return answer
+        
+        # Fallback: Look for answer in elements with specific classes/attributes
+        answer_elements = soup.find_all(
+            attrs={"class": re.compile(r"answer|correct|solution", re.IGNORECASE)}
+        )
+        
+        for elem in answer_elements:
+            text = clean_text(elem.get_text())
+            match = re.search(r"\b([A-D])\b", text)
+            if match:
+                logger.debug(f"Answer found by class: {match.group(1).upper()}")
+                return match.group(1).upper()
+                
+        return ""
+        
+    except Exception as e:
+        logger.warning(f"Answer extraction failed for {detail_url}: {e}")
+        return ""
+
+def extract_question_number(div):
+    """
+    Extracts question number from various possible locations within a question item div.
+    """
+    # Method 1: Standard location
+    num_div = div.find("div", class_="question_sn bg-danger mr-3")
+    if num_div:
+        return clean_text(num_div.get_text())
+    
+    # Method 2: Look for any strong/span element with a number pattern
+    for elem in div.find_all(['span', 'strong']):
+        text = clean_text(elem.get_text())
+        if re.match(r'^\d+$', text):
+            return text
+            
+    # Method 3: Extract from the beginning of the question text itself
+    question_desc = div.find("div", class_="question-desc mt-0 mb-3")
+    if question_desc:
+        text = clean_text(question_desc.get_text())
+        match = re.search(r'^\s*(\d+)\.', text)
+        if match:
+            return match.group(1)
+            
+    return ""
+
+def detect_question_type(question_text, current_passage, has_images):
+    """
+    Detects question type for CRK questions.
+    Categories: comprehension, scripture-based, doctrinal, historical, or objective
+    """
+    comprehension_indicators = [
+        'according to the passage', 'the passage above', 'from the text',
+        'the verse states', 'as mentioned', 'refer to the passage'
+    ]
+    
+    scripture_indicators = [
+        'according to the bible', 'in the book of', 'the scripture',
+        'jesus said', 'paul wrote', 'moses', 'david', 'prophet',
+        'gospel', 'epistle', 'genesis', 'exodus', 'psalms', 'proverbs'
+    ]
+    
+    doctrinal_indicators = [
+        'doctrine', 'theological', 'belief', 'teaching', 'christian view',
+        'sacrament', 'trinity', 'salvation', 'redemption', 'grace',
+        'faith', 'baptism', 'communion', 'holy spirit'
+    ]
+    
+    historical_indicators = [
+        'early church', 'reformation', 'apostolic', 'council of',
+        'church history', 'during the time', 'historical', 'century'
+    ]
+    
+    question_lower = question_text.lower()
+    
+    # If there's an active passage context
+    if current_passage:
+        return "comprehension"
+    
+    # Check for comprehension questions
+    for indicator in comprehension_indicators:
+        if indicator in question_lower:
+            return "comprehension"
+    
+    # Check for scripture-based questions
+    for indicator in scripture_indicators:
+        if indicator in question_lower:
+            return "scripture-based"
+    
+    # Check for doctrinal questions
+    for indicator in doctrinal_indicators:
+        if indicator in question_lower:
+            return "doctrinal"
+    
+    # Check for historical questions
+    for indicator in historical_indicators:
+        if indicator in question_lower:
+            return "historical"
+    
+    return "objective"
+
+def extract_crk_context(element):
+    """
+    Extracts CRK-specific context like Bible passages, scripture references, or comprehension texts.
+    """
+    if not element:
+        return ""
+    
+    text = extract_formatted_text(element)
+    
+    # Check for CRK-specific keywords
+    crk_keywords = ['read the passage', 'scripture', 'bible verse', 'the following passage',
+                    'text below', 'extract', 'comprehension', 'according to', 'verse']
+    
+    # Also check for biblical book names
+    biblical_books = ['genesis', 'exodus', 'leviticus', 'numbers', 'deuteronomy',
+                      'matthew', 'mark', 'luke', 'john', 'acts', 'romans', 'corinthians',
+                      'galatians', 'ephesians', 'philippians', 'colossians', 'timothy',
+                      'psalms', 'proverbs', 'isaiah', 'jeremiah', 'ezekiel', 'daniel']
+    
+    text_lower = text.lower()
+    
+    if any(keyword in text_lower for keyword in crk_keywords):
+        return text
+    
+    if any(book in text_lower for book in biblical_books):
+        return text
+    
+    return ""
+
+def scrape_year(year, total_pages=35):
+    """
+    Enhanced scraping function for Christian Religious Knowledge questions from myschool.ng
+    Handles comprehension passages, scripture-based questions, doctrinal, and historical questions.
+    """
+    logger.info(f"\n📖 Starting scrape for CHRISTIAN RELIGIOUS KNOWLEDGE year {year}")
+    session = requests.Session()
+    session.headers.update(headers)
+    
+    all_data = []
+    failures = []
+    
+    # Build URL for CRK
+    base_url = f"{BASE_URL}/classroom/christian-religious-knowledge-crk?exam_type=waec&exam_year={year}&type=obj&page="
+    
+    # First, check if we can access the first page to verify the year has content
+    test_url = base_url + "1"
+    try:
+        test_response = session.get(test_url, headers=headers, timeout=15)
+        test_response.raise_for_status()
+        test_soup = BeautifulSoup(test_response.text, "html.parser")
+        
+        # Check if there are any questions at all
+        if not test_soup.find("div", class_=re.compile(r"question-item")):
+            logger.warning(f"⚠️ Year {year} appears to have no questions available. Check if this year exists on the website.")
+            return
+        else:
+            logger.info(f"✓ Confirmed year {year} has questions available")
+    except Exception as e:
+        logger.error(f"Could not verify year {year}: {e}")
+        return
+
+    for page in range(1, total_pages + 1):
+        url = base_url + str(page)
+        logger.info(f"📄 Scraping page {page}/{total_pages} for year {year}")
+        
+        try:
+            response = session.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Find the main content area - try multiple approaches
+            main_content_div = soup.find("div", class_="col-lg-8")
+            
+            # Fallback 1: Try 'col-md-8' or similar variations
+            if not main_content_div:
+                main_content_div = soup.find("div", class_=re.compile(r"col-(lg|md|sm)-8"))
+                if main_content_div:
+                    logger.info(f"Found main content via alternative col class on page {page}")
+            
+            # Fallback 2: Look for question-item directly
+            if not main_content_div:
+                logger.info(f"Class 'col-lg-8' not found on page {page}. Attempting fallback method.")
+                first_question_item = soup.find("div", class_="media question-item mb-4")
+                if first_question_item:
+                    main_content_div = first_question_item.find_parent("div")
+                    if main_content_div:
+                        logger.info(f"Found main_content_div via parent of first question item on page {page}.")
+            
+            # Fallback 3: Try different question-item class variations
+            if not main_content_div:
+                first_question_item = soup.find("div", class_=re.compile(r"question-item"))
+                if first_question_item:
+                    main_content_div = first_question_item.find_parent("div")
+                    if main_content_div:
+                        logger.info(f"Found main_content_div via question-item variant on page {page}.")
+            
+            # Check if we actually found any questions at all
+            if not main_content_div:
+                # Debug: Save the HTML to inspect
+                debug_file = f"debug_page_{year}_{page}.html"
+                with open(debug_file, "w", encoding="utf-8") as f:
+                    f.write(soup.prettify())
+                logger.warning(f"No main content div found. HTML saved to {debug_file} for inspection.")
+                logger.warning(f"No 'question-item' divs found on page {page} for year {year}. Skipping page.")
+                continue
+
+            current_instruction = ""
+            current_passage = ""
+            
+            # Iterate through the direct children of the main content div
+            for child in main_content_div.children:
+                if child.name is None:
+                    continue
+
+                # Check if the child element is a question item
+                if 'class' in child.attrs and 'question-item' in child.attrs['class']:
+                    q_item_div = child
+                    try:
+                        media_body = q_item_div.find("div", class_="media-body")
+                        if not media_body:
+                            failures.append(f"Year {year}, Page {page}, Q (unknown): No media-body found.")
+                            continue
+
+                        question_number = extract_question_number(q_item_div)
+                        if not question_number:
+                            question_number = f"P{page}Q{len(all_data) + 1}"
+                            
+                        question_container = media_body.find("div", class_="question-desc mt-0 mb-3")
+                        if not question_container:
+                            failures.append(f"Year {year}, Page {page}, Q{question_number}: No question-desc container.")
+                            continue
+                        
+                        # Extract images from the question container and its siblings
+                        question_images = []
+                        
+                        # Check for images in the question container itself
+                        question_images.extend(extract_images_from_element(question_container))
+                        
+                        # Check for images in preceding siblings (illustrations often appear before the question)
+                        for sibling in question_container.previous_siblings:
+                            if hasattr(sibling, 'find_all'):
+                                question_images.extend(extract_images_from_element(sibling))
+                        
+                        # Also check the entire media_body for images
+                        all_images_in_question = extract_images_from_element(media_body)
+                        for img_url in all_images_in_question:
+                            if img_url not in question_images:
+                                question_images.append(img_url)
+                        
+                        # Convert image list to string (pipe-separated for multiple images)
+                        image_urls = " | ".join(question_images) if question_images else ""
+                        
+                        if question_images:
+                            logger.info(f"📸 Found {len(question_images)} image(s) for Q{question_number}")
+                        
+                        question_text = extract_question_text_only(question_container)
+                        
+                        if not question_text:
+                            failures.append(f"Year {year}, Page {page}, Q{question_number}: No question text extracted.")
+                            continue
+                        
+                        # Detect question type for CRK
+                        question_type = detect_question_type(question_text, current_passage, bool(question_images))
+                        
+                        options = extract_options(media_body)
+                        
+                        link_tag = media_body.find("a", href=True)
+                        detail_url = urljoin(BASE_URL, link_tag['href']) if link_tag else ""
+                        
+                        answer = extract_answer(detail_url, session)
+                        
+                        all_data.append({
+                            "Year": year,
+                            "Page": page,
+                            "Question_Number": question_number,
+                            "Question_Type": question_type,
+                            "Instruction": current_instruction,
+                            "Passage_Context": current_passage,
+                            "Image_URLs": image_urls,
+                            "Question": question_text,
+                            "OptionA": options.get("A", ""),
+                            "OptionB": options.get("B", ""),
+                            "OptionC": options.get("C", ""),
+                            "OptionD": options.get("D", ""),
+                            "Answer": answer,
+                            "Detail_URL": detail_url
+                        })
+                        
+                        preview = question_text[:80] + ("..." if len(question_text) > 80 else "")
+                        img_indicator = f" 📸x{len(question_images)}" if question_images else ""
+                        logger.info(f"✅ {year} Q{question_number} ({question_type}){img_indicator}: {preview} → {answer}")
+                        
+                        time.sleep(1) # Respectful delay
+                        
+                    except Exception as e:
+                        error_msg = f"Year {year}, Page {page}, Q{question_number} (processing error): {str(e)}"
+                        failures.append(error_msg)
+                        logger.error(error_msg)
+                        continue
+                
+                # If it's not a question item, check if it's an instruction or passage context
+                else:
+                    text_content = extract_formatted_text(child)
+                    if not text_content:
+                        continue
+
+                    # CRK-specific instruction keywords
+                    instruction_keywords = ['choose the one that', 'in each of the following', 
+                                           'select the option', 'which of the following',
+                                           'use the following information', 'answer the questions']
+                    
+                    # CRK passage/comprehension keywords
+                    passage_keywords = ['read the passage', 'the following passage', 'scripture',
+                                       'bible verse', 'extract', 'comprehension', 'text below',
+                                       'according to', 'the passage reads']
+                    
+                    is_instruction = (len(text_content) > 20 and len(text_content) < 500 and 
+                                      any(kw in text_content.lower() for kw in instruction_keywords))
+
+                    is_passage = (len(text_content) > 50 and 
+                                 (any(kw in text_content.lower() for kw in passage_keywords) or
+                                  # Long text blocks are likely passages
+                                  (len(text_content) > 200 and 
+                                   not any(opt_char + '.' in text_content for opt_char in ['A', 'B', 'C', 'D']))))
+
+                    if is_instruction:
+                        current_instruction = text_content
+                        logger.info(f"Detected Instruction: {text_content[:100]}...")
+                    elif is_passage:
+                        current_passage = text_content
+                        logger.info(f"📜 Detected Passage/Comprehension Text: {text_content[:100]}...")
+            
+            time.sleep(2) # Delay between pages
+            
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Year {year}, Page {page} (HTTP request failed): {str(e)}"
+            failures.append(error_msg)
+            logger.error(error_msg)
+            continue
+        except Exception as e:
+            error_msg = f"Year {year}, Page {page} (unexpected error): {str(e)}"
+            failures.append(error_msg)
+            logger.error(error_msg)
+            continue
+
+    # Save data for this year
+    if all_data:
+        df = pd.DataFrame(all_data)
+        
+        # Create filename
+        filename = f"waec_crk_{year}_complete.csv"
+        df.to_csv(filename, index=False)
+        
+        # Show statistics
+        total_questions = len(df)
+        comprehension_count = len(df[df['Question_Type'] == 'comprehension'])
+        scripture_count = len(df[df['Question_Type'] == 'scripture-based'])
+        doctrinal_count = len(df[df['Question_Type'] == 'doctrinal'])
+        historical_count = len(df[df['Question_Type'] == 'historical'])
+        objective_count = len(df[df['Question_Type'] == 'objective'])
+        answered_count = len(df[df['Answer'] != ''])
+        with_images_count = len(df[df['Image_URLs'] != ''])
+        with_passages_count = len(df[df['Passage_Context'] != ''])
+        
+        logger.info(f"✅ Year {year} Results:")
+        logger.info(f"    📊 Total questions: {total_questions}")
+        logger.info(f"    📖 Comprehension: {comprehension_count}")
+        logger.info(f"    ✝️  Scripture-based: {scripture_count}")
+        logger.info(f"    📚 Doctrinal: {doctrinal_count}")
+        logger.info(f"    🏛️  Historical: {historical_count}")
+        logger.info(f"    📝 Objective: {objective_count}")
+        logger.info(f"    ✅ With answers: {answered_count}")
+        logger.info(f"    📸 With images: {with_images_count}")
+        logger.info(f"    📜 With passages: {with_passages_count}")
+        logger.info(f"    💾 Saved to: {filename}")
+        
+    else:
+        logger.error(f"❌ No data scraped for year {year}")
+
+    # Save failures if any
+    if failures:
+        failure_file = f"scraping_failures_crk_{year}.txt"
+        with open(failure_file, "w") as f:
+            f.write("\n".join(failures))
+        logger.warning(f"⚠️ {len(failures)} failures saved to {failure_file}")
+
+def scrape_multiple_years(years):
+    """Scrape multiple years with progress tracking"""
+    logger.info(f"🚀 Starting multi-year scrape for CHRISTIAN RELIGIOUS KNOWLEDGE years: {years}")
+    
+    total_start_time = time.time()
+    
+    for i, year in enumerate(years, 1):
+        year_start_time = time.time()
+        
+        logger.info(f"\n{'='*50}")
+        logger.info(f"📅 YEAR {year} ({i}/{len(years)})")
+        logger.info(f"{'='*50}")
+        
+        scrape_year(year)
+        
+        year_duration = time.time() - year_start_time
+        logger.info(f"⏱️ Year {year} completed in {year_duration:.1f} seconds")
+        
+        # Wait between years
+        if i < len(years):
+            logger.info("⏳ Waiting 5 seconds before next year...")
+            time.sleep(5)
+    
+    total_duration = time.time() - total_start_time
+    logger.info(f"\n🎉 All years completed in {total_duration:.1f} seconds!")
+
+def combine_all_years(years):
+    """Combine all year files into one master file"""
+    all_dataframes = []
+    
+    for year in years:
+        filename = f"waec_crk_{year}_complete.csv"
+        if os.path.exists(filename):
+            try:
+                df = pd.read_csv(filename)
+                all_dataframes.append(df)
+                logger.info(f"📂 Loaded {len(df)} questions from {filename}")
+            except Exception as e:
+                logger.error(f"Error loading {filename}: {e}")
+        else:
+            logger.warning(f"File {filename} not found, skipping.")
+            
+    if all_dataframes:
+        combined_df = pd.concat(all_dataframes, ignore_index=True)
+        combined_filename = "waec_crk_all_years_complete.csv"
+        combined_df.to_csv(combined_filename, index=False)
+        
+        logger.info(f"🎯 FINAL SUMMARY:")
+        logger.info(f"    📊 Total questions: {len(combined_df)}")
+        logger.info(f"    📖 Comprehension: {len(combined_df[combined_df['Question_Type'] == 'comprehension'])}")
+        logger.info(f"    ✝️  Scripture-based: {len(combined_df[combined_df['Question_Type'] == 'scripture-based'])}")
+        logger.info(f"    📚 Doctrinal: {len(combined_df[combined_df['Question_Type'] == 'doctrinal'])}")
+        logger.info(f"    🏛️  Historical: {len(combined_df[combined_df['Question_Type'] == 'historical'])}")
+        logger.info(f"    📝 Objective: {len(combined_df[combined_df['Question_Type'] == 'objective'])}")
+        logger.info(f"    ✅ With answers: {len(combined_df[combined_df['Answer'] != ''])}")
+        logger.info(f"    📸 With images: {len(combined_df[combined_df['Image_URLs'] != ''])}")
+        logger.info(f"    📜 With passages: {len(combined_df[combined_df['Passage_Context'] != ''])}")
+        logger.info(f"    💾 Combined file: {combined_filename}")
+        
+    else:
+        logger.error(f"❌ No dataframes to combine for years: {years}")
+
+# 📽 Main execution
+if __name__ == "__main__":
+    # Configure years to scrape
+    years_to_scrape = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
+    
+    logger.info("🎯 WAEC CHRISTIAN RELIGIOUS KNOWLEDGE Comprehensive Scraper")
+    logger.info("=" * 60)
+    
+    # Scrape all years
+    scrape_multiple_years(years_to_scrape)
+    
+    # Combine all results
+    combine_all_years(years_to_scrape)
+    
+    logger.info("\n✨ Scraping complete! Check the generated CSV files.")

@@ -1,0 +1,122 @@
+{% extends 'layout.html' %}
+{% block content %}
+
+<!-- Home Button -->
+<div class="d-flex justify-content-between mb-3">
+  <a href="{{ url_for('index') }}" class="btn dor btn-outline-light btn-sm me-2">🏠 Home</a>
+  <div><strong>{{ session.subject|capitalize }} Quiz</strong></div>
+</div>
+
+<div class="row">
+  <div class="col-md-8">
+    <div class="card p-4 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div>Question {{ idx + 1 }} of {{ total }}</div>
+        <div>Score: {{ score }}</div>
+      </div>
+
+      {% if q.Image_URLs_List %}
+      <div class="text-center mb-3">
+        {% for img in q.Image_URLs_List %}
+        <img src="{{ url_for('proxy_image') }}?url={{ img }}" alt="diagram" class="img-fluid mb-2 rounded shadow">
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <h5 class="mb-3">{{ q['Question']|safe }}</h5>
+
+      <form method="POST" action="{{ url_for('action') }}">
+        <input type="hidden" name="action" value="submit">
+        <div class="mb-3">
+          {% for key, opt_text in display_opts.items() %}
+            <div class="form-check mb-2">
+              <input
+                class="form-check-input"
+                type="radio"
+                name="selected"
+                value="{{ key }}"
+                id="opt{{ key }}"
+                {% if stored_answer == key %}checked{% endif %}
+              >
+              <label class="form-check-label" for="opt{{ key }}">
+                <!-- ✅ Render LaTeX equations here as well -->
+                <span class="mathjax-option">{{ opt_text|safe }}</span>
+              </label>
+            </div>
+          {% endfor %}
+        </div>
+        <button class="btn btn-success door">✅ Submit</button>
+      </form>
+
+      <!-- Navigation Buttons -->
+      <div class="d-flex gap-2 flex-wrap mt-3 doe">
+        <form method="POST" action="{{ url_for('action') }}">
+          <input type="hidden" name="action" value="prev">
+          <button class="btn btn-secondary" {% if idx == 0 %}disabled{% endif %}>⬅️ Previous</button>
+        </form>
+
+        <form method="POST" action="{{ url_for('action') }}">
+          <input type="hidden" name="action" value="skip">
+          <button class="btn btn-warning">⏭️ Skip</button>
+        </form>
+
+        <form method="POST" action="{{ url_for('action') }}">
+          <input type="hidden" name="action" value="next">
+          <button class="btn btn-primary" {% if idx + 1 >= total %}disabled{% endif %}>➡️ Next</button>
+        </form>
+      </div>
+
+      {% if session.show_explanation %}
+        {% set exp_key = session.subject|string + '_' + idx|string + '_' + year|string %}
+        {% if exp_key in session.explanations %}
+        <div class="card p-3 mt-4 bg-info text-white">
+          <h5>🤖 AI Explanation</h5>
+          <p>{{ session.explanations[exp_key] }}</p>
+
+          {% set audio_filename = 'explanation_' + session.subject|string + '_' + idx|string + '_' + year|string + '.mp3' %}
+          <audio controls class="mt-2">
+            <source src="{{ url_for('audio', filename=audio_filename) }}" type="audio/mpeg">
+            Your browser does not support the audio element.
+          </audio>
+        </div>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card p-3 mb-3">
+      <h5>Progress</h5>
+      <div class="progress mb-2">
+        <div class="progress-bar" role="progressbar" style="width: {{ progress }}%;">
+          {{ progress|round(1) }}%
+        </div>
+      </div>
+      <p>Accuracy: {{ accuracy|round(1) }}%</p>
+      <p>Skipped: {{ skipped_count }}</p>
+
+      <form method="POST" action="{{ url_for('action') }}">
+        <input type="hidden" name="action" value="toggle_explanation">
+        <button class="btn btn-outline-secondary w-100">
+          {{ 'Hide Explanation' if session.show_explanation else 'Get AI Explanation' }}
+        </button>
+      </form>
+
+      <form method="POST" action="{{ url_for('action') }}" class="mt-2">
+        <input type="hidden" name="action" value="reset">
+        <button class="btn btn-danger w-100">🔄 Reset Quiz</button>
+      </form>
+
+      <a href="{{ url_for('results') }}" class="btn btn-success w-100 mt-2">📥 View Results</a>
+    </div>
+  </div>
+</div>
+
+<!-- ✅ MathJax auto-refresh (renders new content after navigation) -->
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    if (window.MathJax) MathJax.typesetPromise();
+  });
+</script>
+
+{% endblock %}

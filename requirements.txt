@@ -1,0 +1,6 @@
+Flask
+pandas
+gTTS
+python-dotenv
+openai
+Werkzeug

@@ -1,0 +1,1 @@
+Option B is correct because the distance travelled by the cyclist from P to R is represented by the area under the entire path PQR on a distance-time graph. The area under the curve accounts for the total distance covered during the motion, while option C is incorrect because the gradient of a distance-time graph represents speed, not distance.

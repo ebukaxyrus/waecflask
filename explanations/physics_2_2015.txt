@@ -1,0 +1,1 @@
+Option D (N, or Newton) is correct because it is a derived unit that measures force, defined as the product of mass (kg) and acceleration (m/s²). In contrast, options A (kg), B (m), and C (K) are all base units in the International System of Units (SI). Thus, only the Newton is derived from the base units.

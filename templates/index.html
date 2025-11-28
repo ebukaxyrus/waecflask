@@ -1,0 +1,44 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-5 text-center">
+  <h2 class="mb-4">Welcome to WAEC Quiz App</h2>
+  <p>Select your subject and year to begin.</p>
+
+  <form action="{{ url_for('start') }}" method="POST" class="p-4">
+    <div class="mb-3">
+      <label class="form-label">Select Subject:</label>
+      <select name="subject" class="form-select" required>
+        <option value="english">English</option>
+        <option value="physics">Physics</option>
+        <option value="government">Government</option>
+        <option value="Literature_In_English">Literature-In-English</option>
+        <option value="Civic Education">Civic Education</option>
+        <option value="Mathematics">Mathematics</option>
+        <option value="Geography">Geography</option>
+        <option value="Economics">Economics</option>
+        <option value="Chemistry">Chemistry</option>
+        <option value="Commerce">Commerce</option>
+        <option value="Agricultural Science">Agricultural Science</option>
+        <option value="History">History</option>
+        <option value="Christian Religious Knowledge">CRK</option>
+        <option value="Animal Husbandry">Animal Husbandry</option>
+        <option value="Biology">Biology</option>
+        <option value="further_mathematics">Further_mathematics</option>
+        <option value="further_mathematics">Further_mathematics</option>
+
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Select Year:</label>
+      <select name="year" class="form-select" required>
+        {% for y in years %}
+        <option value="{{ y }}">{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <button type="submit" class="btn btn-primary w-100">Start Quiz</button>
+  </form>
+</div>
+{% endblock %}

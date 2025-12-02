@@ -7,10 +7,21 @@ u {
 .dor{
   color: white;
 }
-.doe{
-  margin-left: 85px;
 
+
+.doe {
+    display: flex;
+    flex-wrap: nowrap;   /* prevent them from going to next line */
+    gap: 10px;           /* space between buttons */
+    align-items: center; /* vertical alignment */
+    margin-left: 85px;
 }
+
+.doe form {
+    display: inline-flex;  /* keep each form on one line */
+    margin: 0;             /* remove extra spacing */
+}
+
 .door{
   margin-bottom: -68px;
 }

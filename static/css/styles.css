@@ -14,7 +14,7 @@ u {
     flex-wrap: nowrap;   /* prevent them from going to next line */
     gap: 10px;           /* space between buttons */
     align-items: center; /* vertical alignment */
-    margin-left: 85px;
+    margin-left: 59px;
 }
 
 .doe form {

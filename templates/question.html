@@ -52,7 +52,7 @@
       <div class="d-flex gap-2 flex-wrap mt-3 doe">
         <form method="POST" action="{{ url_for('action') }}">
           <input type="hidden" name="action" value="prev">
-          <button class="btn btn-secondary far">⬅️ Previous</button>
+          <button class="btn btn-secondary far" {% if idx == 0 %}disabled{% endif %}>⬅️ Previous</button>
         </form>
 
         <form method="POST" action="{{ url_for('action') }}">

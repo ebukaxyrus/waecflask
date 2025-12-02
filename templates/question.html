@@ -49,7 +49,7 @@
       </form>
 
       <!-- Navigation Buttons -->
-      <div class="d-flex gap-2 flex-wrap mt-3 doe">
+      <div class="d-flex gap-2 flex-wrap mt-3 doe w-100 justify-content-center align-items-center">
         <form method="POST" action="{{ url_for('action') }}">
           <input type="hidden" name="action" value="prev">
           <button class="btn btn-secondary far" {% if idx == 0 %}disabled{% endif %}>⬅️ Previous</button>

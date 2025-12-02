@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ title or "WAEC Quiz App" }}</title>
+  <title>{{ title or "Smart Prep" }}</title>
 
   <!-- ✅ Bootstrap 5 -->
   <link
@@ -40,7 +40,7 @@
 <body class="bg-light">
   <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
     <div class="container-fluid">
-      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">🎓 WAEC Quiz</a>
+      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">🎓 Smart Prep</a>
       <div class="d-flex">
         <a href="{{ url_for('index') }}" class="btn btn-outline-light btn-sm me-2">Home</a>
         <a href="{{ url_for('results') }}" class="btn btn-outline-light btn-sm">Results</a>
@@ -66,7 +66,7 @@
   </main>
 
   <footer class="text-center text-muted small mt-5">
-    <p>© {{ 2025 }} WAEC Smart Quiz App • Powered by Flask & OpenAI</p>
+    <p>© {{ 2025 }} Smart Prep App • Powered by Flask & OpenAI</p>
   </footer>
 
   <!-- ✅ Bootstrap JS (for alerts, modals, etc.) -->

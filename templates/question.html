@@ -9,7 +9,7 @@
 
 <div class="row">
   <div class="col-md-8">
-    <div class="card p-4">
+    <div class="card p-4 mb-3">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div>Question {{ idx + 1 }} of {{ total }}</div>
         <div>Score: {{ score }}</div>
@@ -23,47 +23,53 @@
       </div>
       {% endif %}
 
-      <h5 class="mb-3">{{ q['Question']|safe }}</h5>
- 
+      <h5 class="mb-1">{{ q['Question']|safe }}</h5>
+
       <form method="POST" action="{{ url_for('action') }}">
         <input type="hidden" name="action" value="submit">
-        <div class="mb-3">
+        <div class="d-flex flex-column gap-2">
           {% for key, opt_text in display_opts.items() %}
-            <div class="form-check mb-2">
-              <input
-                class="form-check-input"
-                type="radio"
-                name="selected"
-                value="{{ key }}"
-                id="opt{{ key }}"
-                {% if stored_answer == key %}checked{% endif %}
-              >
-              <label class="form-check-label" for="opt{{ key }}">
-                <!-- ✅ Render LaTeX equations here as well -->
-                <span class="mathjax-option">{{ opt_text|safe }}</span>
-              </label>
-            </div>
+          <div class="form-check">
+            <input
+              class="form-check-input"
+              type="radio"
+              name="selected"
+              value="{{ key }}"
+              id="opt{{ key }}"
+              {% if stored_answer == key %}checked{% endif %}
+            >
+            <label class="form-check-label" for="opt{{ key }}">
+              <!-- ✅ Render LaTeX equations here as well -->
+              <span class="mathjax-option">{{ opt_text|safe }}</span>
+            </label>
+          </div>
           {% endfor %}
         </div>
-        <button class="btn btn-success door">✅ Submit</button>
+        <button class="btn btn-success door w-100 mb-3 mt-3">✅ Submit</button>
       </form>
 
       <!-- Navigation Buttons -->
-     <div class="d-flex gap-2 flex-wrap doe w-100 px-2 justify-content-center align-items-center">
-        <form method="POST" action="{{ url_for('action') }}">
-          <input type="hidden" name="action" value="prev">
-          <button class="btn btn-secondary far" {% if idx == 0 %}disabled{% endif %}>⬅️ Previous</button>
-        </form>
+      <div class="d-flex gap-2 flex-wrap justify-content-between align-items-center mt-3">
+        <div>
+          <form method="POST" action="{{ url_for('action') }}">
+            <input type="hidden" name="action" value="prev">
+            <button class="btn btn-secondary far w-100" {% if idx == 0 %}disabled{% endif %}>⬅️ Previous</button>
+          </form>
+        </div>
 
-        <form method="POST" action="{{ url_for('action') }}">
-          <input type="hidden" name="action" value="skip">
-          <button class="btn btn-secondary fare">⏭️ Skip</button>
-        </form>
+        <div>
+          <form method="POST" action="{{ url_for('action') }}">
+            <input type="hidden" name="action" value="skip">
+            <button class="btn btn-secondary fare w-100">⏭️ Skip</button>
+          </form>
+        </div>
 
-        <form method="POST" action="{{ url_for('action') }}">
-          <input type="hidden" name="action" value="next">
-          <button class="btn btn-primary" {% if idx + 1 >= total %}disabled{% endif %}>➡️ Next</button>
-        </form>
+        <div>
+          <form method="POST" action="{{ url_for('action') }}">
+            <input type="hidden" name="action" value="next">
+            <button class="btn btn-primary w-100" {% if idx + 1 >= total %}disabled{% endif %}>➡️ Next</button>
+          </form>
+        </div>
       </div>
 
       {% if session.show_explanation %}
@@ -88,7 +94,7 @@
     <div class="card p-3 mb-3">
       <h5>Progress</h5>
       <div class="progress mb-2">
-        <div class="progress-bar" role="progressbar" style="width: {{ progress }}%;">
+        <div class="progress-bar" role="progressbar" style="width: {{ progress|round(1) }}%;">
           {{ progress|round(1) }}%
         </div>
       </div>

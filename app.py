@@ -1,6 +1,7 @@
 import os
 import re
 from pathlib import Path
+from datetime import timedelta
 from flask import (
     Flask, render_template, request, redirect, url_for, session,
     send_from_directory, flash, Response
@@ -9,23 +10,36 @@ import pandas as pd
 from dotenv import load_dotenv
 import requests
 
-# =============== OPENAI CLIENT ==================
+# ============= OPENAI CLIENT =============
 try:
     from openai import OpenAI as OpenAIClient
     OPENAI_CLIENT_AVAILABLE = True
 except:
     OPENAI_CLIENT_AVAILABLE = False
 
-load_dotenv()
 
+# ============= FLASK APP SETUP =============
+load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret")
+app.permanent_session_lifetime = timedelta(days=30)
 
+
+# ============= AUTH BLUEPRINT =============
+from auth import auth_bp, init_db
+
+app.register_blueprint(auth_bp)
+init_db()   # ensure users.db is created
+
+
+# ============= PATHS =============
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "waec_data"
 STATIC_AUDIO = BASE_DIR / "static" / "audio"
 STATIC_AUDIO.mkdir(parents=True, exist_ok=True)
 
+
+# ============= OPENAI CONFIG =============
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = None
 
@@ -36,7 +50,7 @@ if OPENAI_API_KEY and OPENAI_CLIENT_AVAILABLE:
         client = None
 
 
-# ================ TEXT FORMAT HELPERS ==================
+# ============ TEXT HELPERS ============
 def format_question_text(text):
     if pd.isna(text) or not text:
         return ""
@@ -56,7 +70,7 @@ def clean_option_text(text):
     return text
 
 
-# ================= LOAD QUESTION CSV ===================
+# ============ LOAD CSV ============
 def load_data(subject: str, year: int):
     filename = DATA_DIR / f"waec_{subject}_{year}_complete.csv"
 
@@ -80,16 +94,16 @@ def load_data(subject: str, year: int):
         lambda x: [u.strip() for u in str(x).split(",")] if str(x).strip() else []
     )
 
-    df_filtered = df.dropna(subset=["Question", "Answer"])
-    df_filtered = df_filtered[df_filtered["Answer"].str.upper().isin(["A", "B", "C", "D"])]
+    df = df.dropna(subset=["Question", "Answer"])
+    df = df[df["Answer"].str.upper().isin(["A", "B", "C", "D"])]
 
     for opt in ["OptionA", "OptionB", "OptionC", "OptionD"]:
-        df_filtered[opt] = df_filtered[opt].fillna(f"{opt[-1]} missing")
+        df[opt] = df[opt].fillna(f"{opt[-1]} missing")
 
-    return df_filtered.reset_index(drop=True)
+    return df.reset_index(drop=True)
 
 
-# ================= EXPLANATION + TTS ===================
+# ============ AI EXPLANATION + TTS ============
 def generate_explanation(idx, year, subject, q, selected, correct):
 
     if not client:
@@ -117,7 +131,7 @@ def generate_explanation(idx, year, subject, q, selected, correct):
 
         explanation = completion.choices[0].message.content.strip()
 
-        # ---- TTS ----
+        # ===== TTS =====
         valid_voices = [
             "alloy", "echo", "fable", "onyx", "nova", "shimmer",
             "coral", "verse", "ballad", "ash", "sage", "marin", "cedar"
@@ -126,7 +140,6 @@ def generate_explanation(idx, year, subject, q, selected, correct):
         voice = session.get("voice", "verse")
         if voice not in valid_voices:
             voice = "verse"
-
 
         audio_path = STATIC_AUDIO / f"explanation_{subject}_{idx}_{year}.mp3"
 
@@ -145,7 +158,7 @@ def generate_explanation(idx, year, subject, q, selected, correct):
         return f"⚠️ Error generating explanation: {e}"
 
 
-# ================= INIT SESSION ===================
+# ============ SESSION =============
 def init_session_state(subject, year):
     session["subject"] = subject
     session["year"] = year
@@ -154,10 +167,10 @@ def init_session_state(subject, year):
     session["attempted"] = {}
     session["show_explanation"] = False
     session["explanations"] = {}
-    session["voice"] = session.get("voice", "verse")  # default female voice
+    session["voice"] = session.get("voice", "verse")
 
 
-# ================= ROUTES ============================
+# ============ ROUTES ============
 @app.route("/")
 def index():
     years = list(range(2024, 2014, -1))
@@ -166,11 +179,14 @@ def index():
 
 @app.route("/start", methods=["POST"])
 def start():
+    if "user_id" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("auth.login"))
+
     subject = request.form.get("subject", "english")
     year = int(request.form.get("year", 2024))
 
     session.clear()
-    load_data(subject, year)
     init_session_state(subject, year)
 
     flash(f"🎓 Starting {subject.capitalize()} {year} quiz", "info")
@@ -202,14 +218,10 @@ def quiz():
 
     return render_template(
         "question.html",
-        q=q,
-        idx=idx,
-        subject=subject,
-        year=year,
+        q=q, idx=idx, subject=subject, year=year,
         display_opts=display_opts,
         stored_answer=stored_answer,
-        score=session["score"],
-        accuracy=accuracy,
+        score=session["score"], accuracy=accuracy,
         progress=progress,
         skipped_count=len([v for v in attempted.values() if v == "SKIPPED"]),
         total=len(df)
@@ -229,7 +241,7 @@ def action():
     if act == "submit":
         selected = request.form.get("selected")
         if not selected:
-            flash("Select an option before submitting.", "warning")
+            flash("Select an option.", "warning")
             return redirect(url_for("quiz"))
 
         correct = q["Answer"].upper()
@@ -237,24 +249,20 @@ def action():
         already = str(idx) in attempted
 
         attempted[str(idx)] = selected
-        session["attempted"] = attempted
 
         if not already:
             if selected == correct:
                 session["score"] += 1
                 flash(f"✅ Correct! ({correct})", "success")
             else:
-                flash(f"❌ Incorrect. Correct answer: {correct}", "danger")
+                flash(f"❌ Incorrect. Correct: {correct}", "danger")
 
         session["show_explanation"] = True
         key = f"{subject}_{idx}_{year}"
 
         if key not in session["explanations"]:
-            session["explanations"][key] = generate_explanation(
-                idx, year, subject, q, selected, correct
-            )
+            session["explanations"][key] = generate_explanation(idx, year, subject, q, selected, correct)
 
-        session.modified = True
         return redirect(url_for("quiz"))
 
     # Navigation
@@ -281,40 +289,32 @@ def action():
         init_session_state(subject, year)
 
     elif act == "change_voice":
-        # 1. Update selected voice
         new_voice = request.form.get("voice", "verse")
         session["voice"] = new_voice
 
-        # 2. Regenerate audio for current question
         key = f"{subject}_{idx}_{year}"
 
-        # If explanation already exists, reuse it but regenerate the AUDIO
         if key in session["explanations"]:
-            explanation_text = session["explanations"][key]
-
+            explanation = session["explanations"][key]
             audio_path = STATIC_AUDIO / f"explanation_{subject}_{idx}_{year}.mp3"
 
             try:
-                # Regenerate audio with new voice
                 tts_audio = client.audio.speech.create(
                     model="gpt-4o-mini-tts",
                     voice=new_voice,
-                    input=explanation_text
+                    input=explanation
                 )
-                
-                # Save new audio
+
                 with open(audio_path, "wb") as f:
                     f.write(tts_audio.read())
 
-                flash(f"🔊 Voice changed to {new_voice.capitalize()} (Audio updated)", "success")
-
+                flash(f"🔊 Voice changed to {new_voice}", "success")
             except Exception as e:
-                flash(f"⚠️ Error updating audio: {e}", "danger")
+                flash(f"⚠️ Error: {e}", "danger")
 
         else:
-            flash("ℹ️ Voice updated. Explanation audio will apply on your next submit.", "info")
+            flash("Voice updated. It will apply on next submit.", "info")
 
-    session.modified = True
     return redirect(url_for("quiz"))
 
 
@@ -358,7 +358,7 @@ def proxy_image():
             return Response(r.content, mimetype="image/png")
         return Response("Not found", 404)
     except:
-        return Response("Image load error", 500)
+        return Response("Image error", 500)
 
 
 if __name__ == "__main__":

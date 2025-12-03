@@ -281,8 +281,7 @@ def action():
         init_session_state(subject, year)
 
     elif act == "change_voice":
-        
-    # 1. Update selected voice
+        # 1. Update selected voice
         new_voice = request.form.get("voice", "verse")
         session["voice"] = new_voice
 
@@ -312,14 +311,11 @@ def action():
             except Exception as e:
                 flash(f"⚠️ Error updating audio: {e}", "danger")
 
-    else:
-        flash("ℹ️ Voice updated. Explanation audio will apply on your next submit.", "info")
+        else:
+            flash("ℹ️ Voice updated. Explanation audio will apply on your next submit.", "info")
 
     session.modified = True
     return redirect(url_for("quiz"))
-    
-
-    
 
 
 @app.route("/results")
